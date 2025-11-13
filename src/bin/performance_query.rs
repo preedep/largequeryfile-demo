@@ -2,6 +2,7 @@ use arrow::array::{Array, AsArray};
 use csv::ReaderBuilder;
 use log::info;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use polars::prelude::*;
 use rayon::prelude::*;
 use std::error::Error;
 use std::fs::{self, File};
@@ -227,11 +228,111 @@ fn query_parquet_partitioned(partition_dir: &str, search_pattern: &str) -> Resul
     })
 }
 
+// Query CSV using Polars
+fn query_csv_polars(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
+    info!("Starting CSV Polars query...");
+    let start = Instant::now();
+
+    let file_size_mb = fs::metadata(file_path)?.len() as f64 / 1_024_000.0;
+
+    // Read CSV with Polars
+    let df = CsvReadOptions::default()
+        .try_into_reader_with_file_path(Some(file_path.into()))?
+        .finish()?;
+
+    let total_rows = df.height();
+
+    // Filter rows containing the search pattern
+    let mask = df.column("first_name")?.str()?.contains_literal(search_pattern)?
+        | df.column("last_name")?.str()?.contains_literal(search_pattern)?
+        | df.column("citizen_id")?.str()?.contains_literal(search_pattern)?
+        | df.column("address")?.str()?.contains_literal(search_pattern)?;
+
+    let matching_rows = mask.sum().unwrap_or(0) as usize;
+    let duration_ms = start.elapsed().as_millis();
+
+    Ok(QueryResult {
+        total_rows,
+        matching_rows,
+        duration_ms,
+        file_size_mb,
+    })
+}
+
+// Query Parquet using Polars
+fn query_parquet_polars(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
+    info!("Starting Parquet Polars query...");
+    let start = Instant::now();
+
+    let file_size_mb = fs::metadata(file_path)?.len() as f64 / 1_024_000.0;
+
+    // Read Parquet with Polars
+    let df = ParquetReader::new(std::fs::File::open(file_path)?).finish()?;
+
+    let total_rows = df.height();
+
+    // Filter rows containing the search pattern
+    let mask = df.column("first_name")?.str()?.contains_literal(search_pattern)?
+        | df.column("last_name")?.str()?.contains_literal(search_pattern)?
+        | df.column("citizen_id")?.str()?.contains_literal(search_pattern)?
+        | df.column("address")?.str()?.contains_literal(search_pattern)?;
+
+    let matching_rows = mask.sum().unwrap_or(0) as usize;
+    let duration_ms = start.elapsed().as_millis();
+
+    Ok(QueryResult {
+        total_rows,
+        matching_rows,
+        duration_ms,
+        file_size_mb,
+    })
+}
+
+// Query Partitioned Parquet using Polars
+fn query_parquet_partitioned_polars(partition_dir: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
+    info!("Starting Partitioned Parquet Polars query...");
+    let start = Instant::now();
+
+    // Get partition files
+    let partition_files = get_partition_files(partition_dir)?;
+    info!("Found {} partition files", partition_files.len());
+
+    let file_size_mb = calculate_total_file_size(&partition_files);
+
+    // Read and process all partitions
+    let mut total_rows = 0;
+    let mut matching_rows = 0;
+
+    for partition_file in &partition_files {
+        let df = ParquetReader::new(std::fs::File::open(partition_file)?).finish()?;
+        total_rows += df.height();
+
+        // Filter rows containing the search pattern
+        let mask = df.column("first_name")?.str()?.contains_literal(search_pattern)?
+            | df.column("last_name")?.str()?.contains_literal(search_pattern)?
+            | df.column("citizen_id")?.str()?.contains_literal(search_pattern)?
+            | df.column("address")?.str()?.contains_literal(search_pattern)?;
+
+        matching_rows += mask.sum().unwrap_or(0) as usize;
+    }
+    let duration_ms = start.elapsed().as_millis();
+
+    Ok(QueryResult {
+        total_rows,
+        matching_rows,
+        duration_ms,
+        file_size_mb,
+    })
+}
+
 fn print_professional_report(
     csv_result: &QueryResult,
+    csv_polars_result: &QueryResult,
     parquet_result: &QueryResult,
     parquet_optimized_result: &QueryResult,
     parquet_partitioned_result: &QueryResult,
+    parquet_polars_result: &QueryResult,
+    parquet_partitioned_polars_result: &QueryResult,
     search_pattern: &str,
 ) {
     info!("\n");
@@ -253,6 +354,12 @@ fn print_professional_report(
         csv_result.file_size_mb / (csv_result.duration_ms as f64 / 1000.0),
         csv_result.file_size_mb);
     
+    info!("│ CSV Polars              │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 📊 │",
+        csv_polars_result.duration_ms,
+        csv_polars_result.file_size_mb / (csv_polars_result.duration_ms as f64 / 1000.0),
+        csv_polars_result.file_size_mb,
+        baseline / csv_polars_result.duration_ms as f64);
+    
     info!("│ Parquet Single          │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x    │",
         parquet_result.duration_ms,
         parquet_result.file_size_mb / (parquet_result.duration_ms as f64 / 1000.0),
@@ -271,6 +378,18 @@ fn print_professional_report(
         parquet_partitioned_result.file_size_mb,
         baseline / parquet_partitioned_result.duration_ms as f64);
     
+    info!("│ Parquet Polars          │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 🔥 │",
+        parquet_polars_result.duration_ms,
+        parquet_polars_result.file_size_mb / (parquet_polars_result.duration_ms as f64 / 1000.0),
+        parquet_polars_result.file_size_mb,
+        baseline / parquet_polars_result.duration_ms as f64);
+    
+    info!("│ Parquet Part. Polars    │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 💎 │",
+        parquet_partitioned_polars_result.duration_ms,
+        parquet_partitioned_polars_result.file_size_mb / (parquet_partitioned_polars_result.duration_ms as f64 / 1000.0),
+        parquet_partitioned_polars_result.file_size_mb,
+        baseline / parquet_partitioned_polars_result.duration_ms as f64);
+    
     info!("└─────────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘");
     
     // Results Summary
@@ -286,9 +405,12 @@ fn print_professional_report(
     // Winner Analysis
     let results = [
         ("CSV", csv_result.duration_ms),
+        ("CSV Polars", csv_polars_result.duration_ms),
         ("Parquet Single", parquet_result.duration_ms),
         ("Parquet Optimized", parquet_optimized_result.duration_ms),
         ("Parquet Partitioned", parquet_partitioned_result.duration_ms),
+        ("Parquet Polars", parquet_polars_result.duration_ms),
+        ("Parquet Partitioned Polars", parquet_partitioned_polars_result.duration_ms),
     ];
     let fastest = results.iter().min_by_key(|x| x.1).unwrap();
     
@@ -328,28 +450,44 @@ fn main() -> Result<(), Box<dyn Error>> {
     info!("\n🚀 Starting Performance Query Test...\n");
 
     info!("⏳ Running benchmarks...");
-    info!("\n[1/4] Testing CSV query...");
+    
+    info!("\n[1/7] Testing CSV query...");
     let csv_result = query_csv(csv_file, search_pattern)?;
     info!("      ✓ Completed in {} ms", csv_result.duration_ms);
 
-    info!("\n[2/4] Testing Parquet Single File query...");
+    info!("\n[2/7] Testing CSV Polars query...");
+    let csv_polars_result = query_csv_polars(csv_file, search_pattern)?;
+    info!("      ✓ Completed in {} ms", csv_polars_result.duration_ms);
+
+    info!("\n[3/7] Testing Parquet Single File query...");
     let parquet_result = query_parquet(parquet_file, search_pattern)?;
     info!("      ✓ Completed in {} ms", parquet_result.duration_ms);
 
-    info!("\n[3/4] Testing Parquet Optimized query...");
+    info!("\n[4/7] Testing Parquet Optimized query...");
     let parquet_optimized_result = query_parquet_optimized(parquet_file, search_pattern)?;
     info!("      ✓ Completed in {} ms", parquet_optimized_result.duration_ms);
 
-    info!("\n[4/4] Testing Parquet Partitioned query...");
+    info!("\n[5/7] Testing Parquet Partitioned query...");
     let parquet_partitioned_result = query_parquet_partitioned(parquet_partitioned_dir, search_pattern)?;
     info!("      ✓ Completed in {} ms", parquet_partitioned_result.duration_ms);
+
+    info!("\n[6/7] Testing Parquet Polars query...");
+    let parquet_polars_result = query_parquet_polars(parquet_file, search_pattern)?;
+    info!("      ✓ Completed in {} ms", parquet_polars_result.duration_ms);
+
+    info!("\n[7/7] Testing Parquet Partitioned Polars query...");
+    let parquet_partitioned_polars_result = query_parquet_partitioned_polars(parquet_partitioned_dir, search_pattern)?;
+    info!("      ✓ Completed in {} ms", parquet_partitioned_polars_result.duration_ms);
 
     // Print professional report
     print_professional_report(
         &csv_result,
+        &csv_polars_result,
         &parquet_result,
         &parquet_optimized_result,
         &parquet_partitioned_result,
+        &parquet_polars_result,
+        &parquet_partitioned_polars_result,
         search_pattern,
     );
 

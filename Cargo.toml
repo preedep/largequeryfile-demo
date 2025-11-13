@@ -26,4 +26,5 @@ parquet = "57.0"
 arrow = "57.0"
 rayon = "1.10"
 chrono = "0.4"
+polars = { version = "0.44", features = ["lazy", "parquet", "csv", "strings"] }
 
