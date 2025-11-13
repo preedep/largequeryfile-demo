@@ -9,6 +9,7 @@ use std::fs::{self, File};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
+use sysinfo::{System, Pid};
 
 #[derive(Debug)]
 struct QueryResult {
@@ -20,8 +21,48 @@ struct QueryResult {
     cpu_usage_percent: f32,
 }
 
+struct ResourceMonitor {
+    system: System,
+    pid: Pid,
+    start_memory: u64,
+}
+
+impl ResourceMonitor {
+    fn new() -> Self {
+        let pid = sysinfo::get_current_pid().unwrap();
+        let mut system = System::new();
+        system.refresh_all();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        system.refresh_all();
+        
+        let start_memory = system.process(pid).map(|p| p.memory()).unwrap_or(0);
+        
+        Self {
+            system,
+            pid,
+            start_memory,
+        }
+    }
+    
+    fn measure(&mut self) -> (f64, f32) {
+        self.system.refresh_all();
+        
+        if let Some(process) = self.system.process(self.pid) {
+            let current_memory = process.memory();
+            let cpu_usage = process.cpu_usage();
+            
+            let memory_used_mb = (current_memory.saturating_sub(self.start_memory)) as f64 / (1024.0 * 1024.0);
+            
+            (memory_used_mb.max(0.0), cpu_usage)
+        } else {
+            (0.0, 0.0)
+        }
+    }
+}
+
 fn query_csv(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
     info!("Starting CSV query...");
+    let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
 
     let file = File::open(file_path)?;
@@ -48,14 +89,16 @@ fn query_csv(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<d
     }
 
     let duration_ms = start.elapsed().as_millis();
+    let (memory_used_mb, cpu_usage_percent) = monitor.measure();
+    let (memory_used_mb, cpu_usage_percent) = monitor.measure();
 
     Ok(QueryResult {
         total_rows,
         matching_rows,
         duration_ms,
         file_size_mb,
-        memory_used_mb: 0.0,
-        cpu_usage_percent: 0.0,
+        memory_used_mb,
+        cpu_usage_percent,
     })
 }
 
@@ -85,6 +128,7 @@ fn search_in_batch(batch: &arrow::record_batch::RecordBatch, search_pattern: &st
 
 fn query_parquet(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
     info!("Starting Parquet query...");
+    let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
 
     let file = File::open(file_path)?;
@@ -103,20 +147,22 @@ fn query_parquet(file_path: &str, search_pattern: &str) -> Result<QueryResult, B
     }
 
     let duration_ms = start.elapsed().as_millis();
+    let (memory_used_mb, cpu_usage_percent) = monitor.measure();
 
     Ok(QueryResult {
         total_rows,
         matching_rows,
         duration_ms,
         file_size_mb,
-        memory_used_mb: 0.0,
-        cpu_usage_percent: 0.0,
+        memory_used_mb,
+        cpu_usage_percent,
     })
 }
 
 // Optimized version with tuning
 fn query_parquet_optimized(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
     info!("Starting Optimized Parquet query...");
+    let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
 
     let file = File::open(file_path)?;
@@ -142,14 +188,15 @@ fn query_parquet_optimized(file_path: &str, search_pattern: &str) -> Result<Quer
     });
 
     let duration_ms = start.elapsed().as_millis();
+    let (memory_used_mb, cpu_usage_percent) = monitor.measure();
 
     Ok(QueryResult {
         total_rows: total_rows.load(Ordering::Relaxed),
         matching_rows: matching_rows.load(Ordering::Relaxed),
         duration_ms,
         file_size_mb,
-        memory_used_mb: 0.0,
-        cpu_usage_percent: 0.0,
+        memory_used_mb,
+        cpu_usage_percent,
     })
 }
 
@@ -209,6 +256,7 @@ fn process_partition_file(
 // Query partitioned Parquet files
 fn query_parquet_partitioned(partition_dir: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
     info!("Starting Partitioned Parquet query...");
+    let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
 
     // Get partition files
@@ -227,20 +275,22 @@ fn query_parquet_partitioned(partition_dir: &str, search_pattern: &str) -> Resul
     });
 
     let duration_ms = start.elapsed().as_millis();
+    let (memory_used_mb, cpu_usage_percent) = monitor.measure();
 
     Ok(QueryResult {
         total_rows: total_rows.load(Ordering::Relaxed),
         matching_rows: matching_rows.load(Ordering::Relaxed),
         duration_ms,
         file_size_mb,
-        memory_used_mb: 0.0,
-        cpu_usage_percent: 0.0,
+        memory_used_mb,
+        cpu_usage_percent,
     })
 }
 
 // Query CSV using Polars
 fn query_csv_polars(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
     info!("Starting CSV Polars query...");
+    let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
 
     let file_size_mb = fs::metadata(file_path)?.len() as f64 / 1_024_000.0;
@@ -260,20 +310,22 @@ fn query_csv_polars(file_path: &str, search_pattern: &str) -> Result<QueryResult
 
     let matching_rows = mask.sum().unwrap_or(0) as usize;
     let duration_ms = start.elapsed().as_millis();
+    let (memory_used_mb, cpu_usage_percent) = monitor.measure();
 
     Ok(QueryResult {
         total_rows,
         matching_rows,
         duration_ms,
         file_size_mb,
-        memory_used_mb: 0.0,
-        cpu_usage_percent: 0.0,
+        memory_used_mb,
+        cpu_usage_percent,
     })
 }
 
 // Query Parquet using Polars
 fn query_parquet_polars(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
     info!("Starting Parquet Polars query...");
+    let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
 
     let file_size_mb = fs::metadata(file_path)?.len() as f64 / 1_024_000.0;
@@ -291,20 +343,22 @@ fn query_parquet_polars(file_path: &str, search_pattern: &str) -> Result<QueryRe
 
     let matching_rows = mask.sum().unwrap_or(0) as usize;
     let duration_ms = start.elapsed().as_millis();
+    let (memory_used_mb, cpu_usage_percent) = monitor.measure();
 
     Ok(QueryResult {
         total_rows,
         matching_rows,
         duration_ms,
         file_size_mb,
-        memory_used_mb: 0.0,
-        cpu_usage_percent: 0.0,
+        memory_used_mb,
+        cpu_usage_percent,
     })
 }
 
 // Query Partitioned Parquet using Polars
 fn query_parquet_partitioned_polars(partition_dir: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
     info!("Starting Partitioned Parquet Polars query...");
+    let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
 
     // Get partition files
@@ -330,14 +384,15 @@ fn query_parquet_partitioned_polars(partition_dir: &str, search_pattern: &str) -
         matching_rows += mask.sum().unwrap_or(0) as usize;
     }
     let duration_ms = start.elapsed().as_millis();
+    let (memory_used_mb, cpu_usage_percent) = monitor.measure();
 
     Ok(QueryResult {
         total_rows,
         matching_rows,
         duration_ms,
         file_size_mb,
-        memory_used_mb: 0.0,
-        cpu_usage_percent: 0.0,
+        memory_used_mb,
+        cpu_usage_percent,
     })
 }
 
