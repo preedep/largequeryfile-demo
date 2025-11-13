@@ -1887,6 +1887,7 @@ dependencies = [
  "pretty_env_logger",
  "rand 0.9.2",
  "rayon",
+ "sysinfo 0.32.1",
 ]
 
 [[package]]
@@ -2960,7 +2961,7 @@ dependencies = [
  "rayon",
  "serde",
  "stacker",
- "sysinfo",
+ "sysinfo 0.31.4",
  "version_check",
 ]
 
@@ -3954,6 +3955,20 @@ dependencies = [
  "libc",
  "memchr",
  "ntapi",
+ "windows",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.32.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c33cd241af0f2e9e3b5c32163b873b29956890b5342e6745b917ce9d490f4af"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+ "memchr",
+ "ntapi",
+ "rayon",
  "windows",
 ]
 
