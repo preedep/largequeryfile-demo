@@ -144,12 +144,8 @@ fn query_parquet_optimized(file_path: &str, search_pattern: &str) -> Result<Quer
     })
 }
 
-// Query partitioned Parquet files
-fn query_parquet_partitioned(partition_dir: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
-    info!("Starting Partitioned Parquet query...");
-    let start = Instant::now();
-
-    // Get all partition files
+// Helper: Get sorted list of parquet files from directory
+fn get_partition_files(partition_dir: &str) -> Result<Vec<std::path::PathBuf>, Box<dyn Error>> {
     let partition_path = Path::new(partition_dir);
     if !partition_path.exists() {
         return Err(format!("Partition directory not found: {}", partition_dir).into());
@@ -167,36 +163,58 @@ fn query_parquet_partitioned(partition_dir: &str, search_pattern: &str) -> Resul
         .collect();
 
     partition_files.sort();
-    
-    let num_partitions = partition_files.len();
-    info!("Found {} partition files", num_partitions);
+    Ok(partition_files)
+}
 
-    // Calculate total file size
-    let total_file_size: u64 = partition_files.iter()
+// Helper: Calculate total file size
+fn calculate_total_file_size(files: &[std::path::PathBuf]) -> f64 {
+    let total_bytes: u64 = files.iter()
         .filter_map(|path| fs::metadata(path).ok())
         .map(|metadata| metadata.len())
         .sum();
-    let file_size_mb = total_file_size as f64 / 1_024_000.0;
+    total_bytes as f64 / 1_024_000.0
+}
 
-    let total_rows = AtomicUsize::new(0);
-    let matching_rows = AtomicUsize::new(0);
-
-    // Process all partitions in parallel
-    partition_files.par_iter().for_each(|partition_file| {
-        if let Ok(file) = File::open(partition_file) {
-            if let Ok(builder) = ParquetRecordBatchReaderBuilder::try_new(file) {
-                if let Ok(reader) = builder.with_batch_size(8192).build() {
-                    // Process all batches in this partition
-                    if let Ok(batches) = reader.collect::<Result<Vec<_>, _>>() {
-                        batches.iter().for_each(|batch| {
-                            total_rows.fetch_add(batch.num_rows(), Ordering::Relaxed);
-                            let matches = search_in_batch(batch, search_pattern);
-                            matching_rows.fetch_add(matches, Ordering::Relaxed);
-                        });
-                    }
+// Helper: Process a single partition file
+fn process_partition_file(
+    partition_file: &std::path::Path,
+    search_pattern: &str,
+    total_rows: &AtomicUsize,
+    matching_rows: &AtomicUsize,
+) {
+    if let Ok(file) = File::open(partition_file) {
+        if let Ok(builder) = ParquetRecordBatchReaderBuilder::try_new(file) {
+            if let Ok(reader) = builder.with_batch_size(8192).build() {
+                if let Ok(batches) = reader.collect::<Result<Vec<_>, _>>() {
+                    batches.iter().for_each(|batch| {
+                        total_rows.fetch_add(batch.num_rows(), Ordering::Relaxed);
+                        let matches = search_in_batch(batch, search_pattern);
+                        matching_rows.fetch_add(matches, Ordering::Relaxed);
+                    });
                 }
             }
         }
+    }
+}
+
+// Query partitioned Parquet files
+fn query_parquet_partitioned(partition_dir: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
+    info!("Starting Partitioned Parquet query...");
+    let start = Instant::now();
+
+    // Get partition files
+    let partition_files = get_partition_files(partition_dir)?;
+    info!("Found {} partition files", partition_files.len());
+
+    // Calculate total file size
+    let file_size_mb = calculate_total_file_size(&partition_files);
+
+    // Process all partitions in parallel
+    let total_rows = AtomicUsize::new(0);
+    let matching_rows = AtomicUsize::new(0);
+
+    partition_files.par_iter().for_each(|partition_file| {
+        process_partition_file(partition_file, search_pattern, &total_rows, &matching_rows);
     });
 
     let duration_ms = start.elapsed().as_millis();
@@ -209,54 +227,94 @@ fn query_parquet_partitioned(partition_dir: &str, search_pattern: &str) -> Resul
     })
 }
 
-fn print_report(csv_result: &QueryResult, parquet_result: &QueryResult, search_pattern: &str) {
-    info!("\n{}", "=".repeat(80));
-    info!("📊 PERFORMANCE COMPARISON REPORT");
-    info!("{}", "=".repeat(80));
+fn print_professional_report(
+    csv_result: &QueryResult,
+    parquet_result: &QueryResult,
+    parquet_optimized_result: &QueryResult,
+    parquet_partitioned_result: &QueryResult,
+    search_pattern: &str,
+) {
+    info!("\n");
+    info!("╔═══════════════════════════════════════════════════════════════════════════════╗");
+    info!("║                     📊 PERFORMANCE BENCHMARK REPORT                          ║");
+    info!("╚═══════════════════════════════════════════════════════════════════════════════╝");
     info!("\n🔍 Search Pattern: \"{}\"", search_pattern);
+    info!("📅 Test Date: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
     
-    info!("\n{}", "-".repeat(80));
-    info!("📄 CSV FILE RESULTS");
-    info!("{}", "-".repeat(80));
-    info!("  File Size:      {:.2} MB", csv_result.file_size_mb);
-    info!("  Total Rows:     {}", csv_result.total_rows);
-    info!("  Matching Rows:  {}", csv_result.matching_rows);
-    info!("  Query Time:     {} ms", csv_result.duration_ms);
-    info!("  Throughput:     {:.2} MB/s", 
-             csv_result.file_size_mb / (csv_result.duration_ms as f64 / 1000.0));
-
-    info!("\n{}", "-".repeat(80));
-    info!("📦 PARQUET FILE RESULTS");
-    info!("{}", "-".repeat(80));
-    info!("  File Size:      {:.2} MB", parquet_result.file_size_mb);
-    info!("  Total Rows:     {}", parquet_result.total_rows);
-    info!("  Matching Rows:  {}", parquet_result.matching_rows);
-    info!("  Query Time:     {} ms", parquet_result.duration_ms);
-    info!("  Throughput:     {:.2} MB/s", 
-             parquet_result.file_size_mb / (parquet_result.duration_ms as f64 / 1000.0));
-
-    info!("\n{}", "-".repeat(80));
-    info!("⚡ PERFORMANCE COMPARISON");
-    info!("{}", "-".repeat(80));
+    // Summary Table
+    info!("\n┌─────────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐");
+    info!("│ Method                  │ Query Time   │ Throughput   │ File Size    │ Speedup      │");
+    info!("├─────────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤");
     
-    let speedup = csv_result.duration_ms as f64 / parquet_result.duration_ms as f64;
+    let baseline = csv_result.duration_ms as f64;
+    
+    info!("│ CSV (Baseline)          │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │     1.00x    │",
+        csv_result.duration_ms,
+        csv_result.file_size_mb / (csv_result.duration_ms as f64 / 1000.0),
+        csv_result.file_size_mb);
+    
+    info!("│ Parquet Single          │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x    │",
+        parquet_result.duration_ms,
+        parquet_result.file_size_mb / (parquet_result.duration_ms as f64 / 1000.0),
+        parquet_result.file_size_mb,
+        baseline / parquet_result.duration_ms as f64);
+    
+    info!("│ Parquet Optimized       │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 🚀 │",
+        parquet_optimized_result.duration_ms,
+        parquet_optimized_result.file_size_mb / (parquet_optimized_result.duration_ms as f64 / 1000.0),
+        parquet_optimized_result.file_size_mb,
+        baseline / parquet_optimized_result.duration_ms as f64);
+    
+    info!("│ Parquet Partitioned     │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x ⚡ │",
+        parquet_partitioned_result.duration_ms,
+        parquet_partitioned_result.file_size_mb / (parquet_partitioned_result.duration_ms as f64 / 1000.0),
+        parquet_partitioned_result.file_size_mb,
+        baseline / parquet_partitioned_result.duration_ms as f64);
+    
+    info!("└─────────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘");
+    
+    // Results Summary
+    info!("\n┌─────────────────────────────────────────────────────────────────────────────────┐");
+    info!("│ 📈 RESULTS SUMMARY                                                              │");
+    info!("├─────────────────────────────────────────────────────────────────────────────────┤");
+    info!("│ Total Rows Scanned:     {:>10}                                              │", csv_result.total_rows);
+    info!("│ Matching Rows Found:    {:>10}                                              │", csv_result.matching_rows);
+    info!("│ Match Rate:             {:>9.2}%                                              │", 
+        (csv_result.matching_rows as f64 / csv_result.total_rows as f64) * 100.0);
+    info!("└─────────────────────────────────────────────────────────────────────────────────┘");
+    
+    // Winner Analysis
+    let results = [
+        ("CSV", csv_result.duration_ms),
+        ("Parquet Single", parquet_result.duration_ms),
+        ("Parquet Optimized", parquet_optimized_result.duration_ms),
+        ("Parquet Partitioned", parquet_partitioned_result.duration_ms),
+    ];
+    let fastest = results.iter().min_by_key(|x| x.1).unwrap();
+    
+    info!("\n┌─────────────────────────────────────────────────────────────────────────────────┐");
+    info!("│ 🏆 WINNER: {:60} │", fastest.0);
+    info!("├─────────────────────────────────────────────────────────────────────────────────┤");
+    info!("│ Best Query Time:        {:>8} ms                                              │", fastest.1);
+    info!("│ Performance Gain:       {:>8.2}x faster than CSV baseline                     │", 
+        baseline / fastest.1 as f64);
+    info!("│ Time Saved:             {:>8} ms ({:.1}% reduction)                          │",
+        csv_result.duration_ms - fastest.1,
+        ((csv_result.duration_ms - fastest.1) as f64 / csv_result.duration_ms as f64) * 100.0);
+    info!("└─────────────────────────────────────────────────────────────────────────────────┘");
+    
+    // Storage Efficiency
     let size_reduction = (1.0 - (parquet_result.file_size_mb / csv_result.file_size_mb)) * 100.0;
-    
-    info!("  File Size Reduction: {:.1}%", size_reduction);
-    info!("  Speed Improvement:   {:.2}x", speedup);
-    
-    if speedup > 1.0 {
-        info!("  Winner:              🏆 Parquet is {:.2}x FASTER!", speedup);
-    } else {
-        info!("  Winner:              🏆 CSV is {:.2}x FASTER!", 1.0 / speedup);
-    }
-    
-    info!("  Time Saved:          {} ms ({:.1}%)", 
-             csv_result.duration_ms.saturating_sub(parquet_result.duration_ms),
-             ((csv_result.duration_ms.saturating_sub(parquet_result.duration_ms)) as f64 
-              / csv_result.duration_ms as f64) * 100.0);
-
-    info!("\n{}", "=".repeat(80));
+    info!("\n┌─────────────────────────────────────────────────────────────────────────────────┐");
+    info!("│ 💾 STORAGE EFFICIENCY                                                           │");
+    info!("├─────────────────────────────────────────────────────────────────────────────────┤");
+    info!("│ CSV Size:               {:>8.2} MB                                            │", csv_result.file_size_mb);
+    info!("│ Parquet Size:           {:>8.2} MB                                            │", parquet_result.file_size_mb);
+    info!("│ Space Saved:            {:>8.2} MB ({:.1}% reduction)                        │",
+        csv_result.file_size_mb - parquet_result.file_size_mb,
+        size_reduction);
+    info!("└─────────────────────────────────────────────────────────────────────────────────┘");
+    info!("\n");
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -269,67 +327,31 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     info!("\n🚀 Starting Performance Query Test...\n");
 
-    // Query CSV
+    info!("⏳ Running benchmarks...");
+    info!("\n[1/4] Testing CSV query...");
     let csv_result = query_csv(csv_file, search_pattern)?;
-    info!("CSV query completed in {} ms", csv_result.duration_ms);
+    info!("      ✓ Completed in {} ms", csv_result.duration_ms);
 
-    // Query Parquet (Standard)
+    info!("\n[2/4] Testing Parquet Single File query...");
     let parquet_result = query_parquet(parquet_file, search_pattern)?;
-    info!("Parquet query completed in {} ms", parquet_result.duration_ms);
+    info!("      ✓ Completed in {} ms", parquet_result.duration_ms);
 
-    // Query Parquet (Optimized)
+    info!("\n[3/4] Testing Parquet Optimized query...");
     let parquet_optimized_result = query_parquet_optimized(parquet_file, search_pattern)?;
-    info!("Parquet OPTIMIZED query completed in {} ms", parquet_optimized_result.duration_ms);
+    info!("      ✓ Completed in {} ms", parquet_optimized_result.duration_ms);
 
-    // Query Parquet (Partitioned)
+    info!("\n[4/4] Testing Parquet Partitioned query...");
     let parquet_partitioned_result = query_parquet_partitioned(parquet_partitioned_dir, search_pattern)?;
-    info!("Parquet PARTITIONED query completed in {} ms", parquet_partitioned_result.duration_ms);
+    info!("      ✓ Completed in {} ms", parquet_partitioned_result.duration_ms);
 
-    // Print comparison report
-    print_report(&csv_result, &parquet_result, search_pattern);
-
-    info!("\n{}", "=".repeat(80));
-    info!("🚀 OPTIMIZED PARQUET RESULTS");
-    info!("{}", "=".repeat(80));
-    info!("  Query Time:         {} ms", parquet_optimized_result.duration_ms);
-    info!("  vs Standard:        {:.2}x faster", 
-          parquet_result.duration_ms as f64 / parquet_optimized_result.duration_ms as f64);
-    info!("  vs CSV:             {:.2}x {}", 
-          if csv_result.duration_ms > parquet_optimized_result.duration_ms {
-              csv_result.duration_ms as f64 / parquet_optimized_result.duration_ms as f64
-          } else {
-              parquet_optimized_result.duration_ms as f64 / csv_result.duration_ms as f64
-          },
-          if csv_result.duration_ms > parquet_optimized_result.duration_ms { "FASTER" } else { "SLOWER" });
-    info!("{}", "=".repeat(80));
-
-    info!("\n{}", "=".repeat(80));
-    info!("📂 PARTITIONED PARQUET RESULTS");
-    info!("{}", "=".repeat(80));
-    info!("  File Size:          {:.2} MB", parquet_partitioned_result.file_size_mb);
-    info!("  Total Rows:         {}", parquet_partitioned_result.total_rows);
-    info!("  Matching Rows:      {}", parquet_partitioned_result.matching_rows);
-    info!("  Query Time:         {} ms", parquet_partitioned_result.duration_ms);
-    info!("  Throughput:         {:.2} MB/s", 
-          parquet_partitioned_result.file_size_mb / (parquet_partitioned_result.duration_ms as f64 / 1000.0));
-    info!("\n  Performance:");
-    info!("  vs CSV:             {:.2}x {}", 
-          if csv_result.duration_ms > parquet_partitioned_result.duration_ms {
-              csv_result.duration_ms as f64 / parquet_partitioned_result.duration_ms as f64
-          } else {
-              parquet_partitioned_result.duration_ms as f64 / csv_result.duration_ms as f64
-          },
-          if csv_result.duration_ms > parquet_partitioned_result.duration_ms { "FASTER ⚡" } else { "SLOWER" });
-    info!("  vs Single Parquet:  {:.2}x faster", 
-          parquet_result.duration_ms as f64 / parquet_partitioned_result.duration_ms as f64);
-    info!("  vs Optimized:       {:.2}x {}", 
-          if parquet_optimized_result.duration_ms > parquet_partitioned_result.duration_ms {
-              parquet_optimized_result.duration_ms as f64 / parquet_partitioned_result.duration_ms as f64
-          } else {
-              parquet_partitioned_result.duration_ms as f64 / parquet_optimized_result.duration_ms as f64
-          },
-          if parquet_optimized_result.duration_ms > parquet_partitioned_result.duration_ms { "FASTER 🚀" } else { "SLOWER" });
-    info!("{}", "=".repeat(80));
+    // Print professional report
+    print_professional_report(
+        &csv_result,
+        &parquet_result,
+        &parquet_optimized_result,
+        &parquet_partitioned_result,
+        search_pattern,
+    );
 
     Ok(())
 }
