@@ -30,8 +30,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Write header
     writer.write_record(&["first_name", "last_name", "citizen_id", "address"])?;
 
-    // Generate 100,000 rows
-    for i in 0..500_000 {
+    // Generate 1,000,000 rows
+    for i in 0..1_000_000 {
         let first_name: String = FirstName().fake();
         let last_name: String = LastName().fake();
         let citizen_id = generate_citizen_id();
@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     
     writer.flush()?;
-    info!("Successfully generated mock_data.csv with 100,000 rows!");
-    
+    info!("Successfully generated mock_data.csv with 1,000,000 rows!");
+
     Ok(())
 }
