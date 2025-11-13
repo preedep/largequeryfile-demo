@@ -27,3 +27,4 @@ target
 /.idea
 *.csv
 *.parquet
+mock_data_partitioned/

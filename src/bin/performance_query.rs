@@ -4,7 +4,8 @@ use log::info;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use rayon::prelude::*;
 use std::error::Error;
-use std::fs::File;
+use std::fs::{self, File};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
@@ -143,6 +144,71 @@ fn query_parquet_optimized(file_path: &str, search_pattern: &str) -> Result<Quer
     })
 }
 
+// Query partitioned Parquet files
+fn query_parquet_partitioned(partition_dir: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
+    info!("Starting Partitioned Parquet query...");
+    let start = Instant::now();
+
+    // Get all partition files
+    let partition_path = Path::new(partition_dir);
+    if !partition_path.exists() {
+        return Err(format!("Partition directory not found: {}", partition_dir).into());
+    }
+
+    let mut partition_files: Vec<_> = fs::read_dir(partition_path)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.path().extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s == "parquet")
+                .unwrap_or(false)
+        })
+        .map(|entry| entry.path())
+        .collect();
+
+    partition_files.sort();
+    
+    let num_partitions = partition_files.len();
+    info!("Found {} partition files", num_partitions);
+
+    // Calculate total file size
+    let total_file_size: u64 = partition_files.iter()
+        .filter_map(|path| fs::metadata(path).ok())
+        .map(|metadata| metadata.len())
+        .sum();
+    let file_size_mb = total_file_size as f64 / 1_024_000.0;
+
+    let total_rows = AtomicUsize::new(0);
+    let matching_rows = AtomicUsize::new(0);
+
+    // Process all partitions in parallel
+    partition_files.par_iter().for_each(|partition_file| {
+        if let Ok(file) = File::open(partition_file) {
+            if let Ok(builder) = ParquetRecordBatchReaderBuilder::try_new(file) {
+                if let Ok(reader) = builder.with_batch_size(8192).build() {
+                    // Process all batches in this partition
+                    if let Ok(batches) = reader.collect::<Result<Vec<_>, _>>() {
+                        batches.iter().for_each(|batch| {
+                            total_rows.fetch_add(batch.num_rows(), Ordering::Relaxed);
+                            let matches = search_in_batch(batch, search_pattern);
+                            matching_rows.fetch_add(matches, Ordering::Relaxed);
+                        });
+                    }
+                }
+            }
+        }
+    });
+
+    let duration_ms = start.elapsed().as_millis();
+
+    Ok(QueryResult {
+        total_rows: total_rows.load(Ordering::Relaxed),
+        matching_rows: matching_rows.load(Ordering::Relaxed),
+        duration_ms,
+        file_size_mb,
+    })
+}
+
 fn print_report(csv_result: &QueryResult, parquet_result: &QueryResult, search_pattern: &str) {
     info!("\n{}", "=".repeat(80));
     info!("📊 PERFORMANCE COMPARISON REPORT");
@@ -198,6 +264,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let csv_file = "mock_data.csv";
     let parquet_file = "mock_data.parquet";
+    let parquet_partitioned_dir = "mock_data_partitioned";
     let search_pattern = "Smith"; // Search for common last name
 
     info!("\n🚀 Starting Performance Query Test...\n");
@@ -213,6 +280,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Query Parquet (Optimized)
     let parquet_optimized_result = query_parquet_optimized(parquet_file, search_pattern)?;
     info!("Parquet OPTIMIZED query completed in {} ms", parquet_optimized_result.duration_ms);
+
+    // Query Parquet (Partitioned)
+    let parquet_partitioned_result = query_parquet_partitioned(parquet_partitioned_dir, search_pattern)?;
+    info!("Parquet PARTITIONED query completed in {} ms", parquet_partitioned_result.duration_ms);
 
     // Print comparison report
     print_report(&csv_result, &parquet_result, search_pattern);
@@ -230,6 +301,34 @@ fn main() -> Result<(), Box<dyn Error>> {
               parquet_optimized_result.duration_ms as f64 / csv_result.duration_ms as f64
           },
           if csv_result.duration_ms > parquet_optimized_result.duration_ms { "FASTER" } else { "SLOWER" });
+    info!("{}", "=".repeat(80));
+
+    info!("\n{}", "=".repeat(80));
+    info!("📂 PARTITIONED PARQUET RESULTS");
+    info!("{}", "=".repeat(80));
+    info!("  File Size:          {:.2} MB", parquet_partitioned_result.file_size_mb);
+    info!("  Total Rows:         {}", parquet_partitioned_result.total_rows);
+    info!("  Matching Rows:      {}", parquet_partitioned_result.matching_rows);
+    info!("  Query Time:         {} ms", parquet_partitioned_result.duration_ms);
+    info!("  Throughput:         {:.2} MB/s", 
+          parquet_partitioned_result.file_size_mb / (parquet_partitioned_result.duration_ms as f64 / 1000.0));
+    info!("\n  Performance:");
+    info!("  vs CSV:             {:.2}x {}", 
+          if csv_result.duration_ms > parquet_partitioned_result.duration_ms {
+              csv_result.duration_ms as f64 / parquet_partitioned_result.duration_ms as f64
+          } else {
+              parquet_partitioned_result.duration_ms as f64 / csv_result.duration_ms as f64
+          },
+          if csv_result.duration_ms > parquet_partitioned_result.duration_ms { "FASTER ⚡" } else { "SLOWER" });
+    info!("  vs Single Parquet:  {:.2}x faster", 
+          parquet_result.duration_ms as f64 / parquet_partitioned_result.duration_ms as f64);
+    info!("  vs Optimized:       {:.2}x {}", 
+          if parquet_optimized_result.duration_ms > parquet_partitioned_result.duration_ms {
+              parquet_optimized_result.duration_ms as f64 / parquet_partitioned_result.duration_ms as f64
+          } else {
+              parquet_partitioned_result.duration_ms as f64 / parquet_optimized_result.duration_ms as f64
+          },
+          if parquet_optimized_result.duration_ms > parquet_partitioned_result.duration_ms { "FASTER 🚀" } else { "SLOWER" });
     info!("{}", "=".repeat(80));
 
     Ok(())
