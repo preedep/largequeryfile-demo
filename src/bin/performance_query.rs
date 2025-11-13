@@ -287,7 +287,7 @@ fn query_parquet_partitioned(partition_dir: &str, search_pattern: &str) -> Resul
     })
 }
 
-// Query CSV using Polars
+// Query CSV using Polars (optimized with chunked arrays)
 fn query_csv_polars(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
     info!("Starting CSV Polars query...");
     let mut monitor = ResourceMonitor::new();
@@ -302,13 +302,28 @@ fn query_csv_polars(file_path: &str, search_pattern: &str) -> Result<QueryResult
 
     let total_rows = df.height();
 
-    // Filter rows containing the search pattern (using contains instead of contains_literal for better performance)
-    let mask = df.column("first_name")?.str()?.contains(search_pattern, false)?
-        | df.column("last_name")?.str()?.contains(search_pattern, false)?
-        | df.column("citizen_id")?.str()?.contains(search_pattern, false)?
-        | df.column("address")?.str()?.contains(search_pattern, false)?;
+    // Get columns as ChunkedArrays for faster iteration
+    let first_names = df.column("first_name")?.str()?;
+    let last_names = df.column("last_name")?.str()?;
+    let citizen_ids = df.column("citizen_id")?.str()?;
+    let addresses = df.column("address")?.str()?;
 
-    let matching_rows = mask.sum().unwrap_or(0) as usize;
+    // Parallel search using iterators
+    let matching_rows = (0..total_rows)
+        .into_par_iter()
+        .filter(|&i| {
+            let first = first_names.get(i).unwrap_or("");
+            let last = last_names.get(i).unwrap_or("");
+            let citizen = citizen_ids.get(i).unwrap_or("");
+            let addr = addresses.get(i).unwrap_or("");
+            
+            first.contains(search_pattern)
+                || last.contains(search_pattern)
+                || citizen.contains(search_pattern)
+                || addr.contains(search_pattern)
+        })
+        .count();
+
     let duration_ms = start.elapsed().as_millis();
     let (memory_used_mb, cpu_usage_percent) = monitor.measure();
 
@@ -322,7 +337,7 @@ fn query_csv_polars(file_path: &str, search_pattern: &str) -> Result<QueryResult
     })
 }
 
-// Query Parquet using Polars
+// Query Parquet using Polars (optimized with chunked arrays)
 fn query_parquet_polars(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
     info!("Starting Parquet Polars query...");
     let mut monitor = ResourceMonitor::new();
@@ -335,13 +350,28 @@ fn query_parquet_polars(file_path: &str, search_pattern: &str) -> Result<QueryRe
 
     let total_rows = df.height();
 
-    // Filter rows containing the search pattern (using contains instead of contains_literal for better performance)
-    let mask = df.column("first_name")?.str()?.contains(search_pattern, false)?
-        | df.column("last_name")?.str()?.contains(search_pattern, false)?
-        | df.column("citizen_id")?.str()?.contains(search_pattern, false)?
-        | df.column("address")?.str()?.contains(search_pattern, false)?;
+    // Get columns as ChunkedArrays for faster iteration
+    let first_names = df.column("first_name")?.str()?;
+    let last_names = df.column("last_name")?.str()?;
+    let citizen_ids = df.column("citizen_id")?.str()?;
+    let addresses = df.column("address")?.str()?;
 
-    let matching_rows = mask.sum().unwrap_or(0) as usize;
+    // Parallel search using iterators
+    let matching_rows = (0..total_rows)
+        .into_par_iter()
+        .filter(|&i| {
+            let first = first_names.get(i).unwrap_or("");
+            let last = last_names.get(i).unwrap_or("");
+            let citizen = citizen_ids.get(i).unwrap_or("");
+            let addr = addresses.get(i).unwrap_or("");
+            
+            first.contains(search_pattern)
+                || last.contains(search_pattern)
+                || citizen.contains(search_pattern)
+                || addr.contains(search_pattern)
+        })
+        .count();
+
     let duration_ms = start.elapsed().as_millis();
     let (memory_used_mb, cpu_usage_percent) = monitor.measure();
 
@@ -373,15 +403,32 @@ fn query_parquet_partitioned_polars(partition_dir: &str, search_pattern: &str) -
 
     for partition_file in &partition_files {
         let df = ParquetReader::new(std::fs::File::open(partition_file)?).finish()?;
-        total_rows += df.height();
+        let partition_rows = df.height();
+        total_rows += partition_rows;
 
-        // Filter rows containing the search pattern (using contains instead of contains_literal for better performance)
-        let mask = df.column("first_name")?.str()?.contains(search_pattern, false)?
-            | df.column("last_name")?.str()?.contains(search_pattern, false)?
-            | df.column("citizen_id")?.str()?.contains(search_pattern, false)?
-            | df.column("address")?.str()?.contains(search_pattern, false)?;
+        // Get columns as ChunkedArrays for faster iteration
+        let first_names = df.column("first_name")?.str()?;
+        let last_names = df.column("last_name")?.str()?;
+        let citizen_ids = df.column("citizen_id")?.str()?;
+        let addresses = df.column("address")?.str()?;
 
-        matching_rows += mask.sum().unwrap_or(0) as usize;
+        // Parallel search within partition
+        let partition_matches = (0..partition_rows)
+            .into_par_iter()
+            .filter(|&i| {
+                let first = first_names.get(i).unwrap_or("");
+                let last = last_names.get(i).unwrap_or("");
+                let citizen = citizen_ids.get(i).unwrap_or("");
+                let addr = addresses.get(i).unwrap_or("");
+                
+                first.contains(search_pattern)
+                    || last.contains(search_pattern)
+                    || citizen.contains(search_pattern)
+                    || addr.contains(search_pattern)
+            })
+            .count();
+        
+        matching_rows += partition_matches;
     }
     let duration_ms = start.elapsed().as_millis();
     let (memory_used_mb, cpu_usage_percent) = monitor.measure();
