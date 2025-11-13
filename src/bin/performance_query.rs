@@ -302,11 +302,11 @@ fn query_csv_polars(file_path: &str, search_pattern: &str) -> Result<QueryResult
 
     let total_rows = df.height();
 
-    // Filter rows containing the search pattern
-    let mask = df.column("first_name")?.str()?.contains_literal(search_pattern)?
-        | df.column("last_name")?.str()?.contains_literal(search_pattern)?
-        | df.column("citizen_id")?.str()?.contains_literal(search_pattern)?
-        | df.column("address")?.str()?.contains_literal(search_pattern)?;
+    // Filter rows containing the search pattern (using contains instead of contains_literal for better performance)
+    let mask = df.column("first_name")?.str()?.contains(search_pattern, false)?
+        | df.column("last_name")?.str()?.contains(search_pattern, false)?
+        | df.column("citizen_id")?.str()?.contains(search_pattern, false)?
+        | df.column("address")?.str()?.contains(search_pattern, false)?;
 
     let matching_rows = mask.sum().unwrap_or(0) as usize;
     let duration_ms = start.elapsed().as_millis();
@@ -335,11 +335,11 @@ fn query_parquet_polars(file_path: &str, search_pattern: &str) -> Result<QueryRe
 
     let total_rows = df.height();
 
-    // Filter rows containing the search pattern
-    let mask = df.column("first_name")?.str()?.contains_literal(search_pattern)?
-        | df.column("last_name")?.str()?.contains_literal(search_pattern)?
-        | df.column("citizen_id")?.str()?.contains_literal(search_pattern)?
-        | df.column("address")?.str()?.contains_literal(search_pattern)?;
+    // Filter rows containing the search pattern (using contains instead of contains_literal for better performance)
+    let mask = df.column("first_name")?.str()?.contains(search_pattern, false)?
+        | df.column("last_name")?.str()?.contains(search_pattern, false)?
+        | df.column("citizen_id")?.str()?.contains(search_pattern, false)?
+        | df.column("address")?.str()?.contains(search_pattern, false)?;
 
     let matching_rows = mask.sum().unwrap_or(0) as usize;
     let duration_ms = start.elapsed().as_millis();
@@ -375,11 +375,11 @@ fn query_parquet_partitioned_polars(partition_dir: &str, search_pattern: &str) -
         let df = ParquetReader::new(std::fs::File::open(partition_file)?).finish()?;
         total_rows += df.height();
 
-        // Filter rows containing the search pattern
-        let mask = df.column("first_name")?.str()?.contains_literal(search_pattern)?
-            | df.column("last_name")?.str()?.contains_literal(search_pattern)?
-            | df.column("citizen_id")?.str()?.contains_literal(search_pattern)?
-            | df.column("address")?.str()?.contains_literal(search_pattern)?;
+        // Filter rows containing the search pattern (using contains instead of contains_literal for better performance)
+        let mask = df.column("first_name")?.str()?.contains(search_pattern, false)?
+            | df.column("last_name")?.str()?.contains(search_pattern, false)?
+            | df.column("citizen_id")?.str()?.contains(search_pattern, false)?
+            | df.column("address")?.str()?.contains(search_pattern, false)?;
 
         matching_rows += mask.sum().unwrap_or(0) as usize;
     }
