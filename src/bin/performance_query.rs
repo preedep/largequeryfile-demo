@@ -335,72 +335,72 @@ fn print_professional_report(
     parquet_partitioned_polars_result: &QueryResult,
     search_pattern: &str,
 ) {
-    info!("\n");
-    info!("╔═══════════════════════════════════════════════════════════════════════════════╗");
-    info!("║                     📊 PERFORMANCE BENCHMARK REPORT                          ║");
-    info!("╚═══════════════════════════════════════════════════════════════════════════════╝");
-    info!("\n🔍 Search Pattern: \"{}\"", search_pattern);
-    info!("📅 Test Date: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+    println!("\n");
+    println!("╔═══════════════════════════════════════════════════════════════════════════════╗");
+    println!("║                     📊 PERFORMANCE BENCHMARK REPORT                          ║");
+    println!("╚═══════════════════════════════════════════════════════════════════════════════╝");
+    println!("\n🔍 Search Pattern: \"{}\"", search_pattern);
+    println!("📅 Test Date: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
     
     // Summary Table
-    info!("\n┌─────────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐");
-    info!("│ Method                  │ Query Time   │ Throughput   │ File Size    │ Speedup      │");
-    info!("├─────────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤");
+    println!("\n┌─────────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐");
+    println!("│ Method                  │ Query Time   │ Throughput   │ File Size    │ Speedup      │");
+    println!("├─────────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤");
     
     let baseline = csv_result.duration_ms as f64;
     
-    info!("│ CSV (Baseline)          │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │     1.00x    │",
+    println!("│ CSV (Baseline)          │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │     1.00x    │",
         csv_result.duration_ms,
         csv_result.file_size_mb / (csv_result.duration_ms as f64 / 1000.0),
         csv_result.file_size_mb);
     
-    info!("│ CSV Polars              │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 📊 │",
+    println!("│ CSV Polars              │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 📊 │",
         csv_polars_result.duration_ms,
         csv_polars_result.file_size_mb / (csv_polars_result.duration_ms as f64 / 1000.0),
         csv_polars_result.file_size_mb,
         baseline / csv_polars_result.duration_ms as f64);
     
-    info!("│ Parquet Single          │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x    │",
+    println!("│ Parquet Single          │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x    │",
         parquet_result.duration_ms,
         parquet_result.file_size_mb / (parquet_result.duration_ms as f64 / 1000.0),
         parquet_result.file_size_mb,
         baseline / parquet_result.duration_ms as f64);
     
-    info!("│ Parquet Optimized       │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 🚀 │",
+    println!("│ Parquet Optimized       │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 🚀 │",
         parquet_optimized_result.duration_ms,
         parquet_optimized_result.file_size_mb / (parquet_optimized_result.duration_ms as f64 / 1000.0),
         parquet_optimized_result.file_size_mb,
         baseline / parquet_optimized_result.duration_ms as f64);
     
-    info!("│ Parquet Partitioned     │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x ⚡ │",
+    println!("│ Parquet Partitioned     │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x ⚡ │",
         parquet_partitioned_result.duration_ms,
         parquet_partitioned_result.file_size_mb / (parquet_partitioned_result.duration_ms as f64 / 1000.0),
         parquet_partitioned_result.file_size_mb,
         baseline / parquet_partitioned_result.duration_ms as f64);
     
-    info!("│ Parquet Polars          │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 🔥 │",
+    println!("│ Parquet Polars          │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 🔥 │",
         parquet_polars_result.duration_ms,
         parquet_polars_result.file_size_mb / (parquet_polars_result.duration_ms as f64 / 1000.0),
         parquet_polars_result.file_size_mb,
         baseline / parquet_polars_result.duration_ms as f64);
     
-    info!("│ Parquet Part. Polars    │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 💎 │",
+    println!("│ Parquet Part. Polars    │ {:>8} ms │ {:>8.2} MB/s │ {:>8.2} MB │ {:>8.2}x 💎 │",
         parquet_partitioned_polars_result.duration_ms,
         parquet_partitioned_polars_result.file_size_mb / (parquet_partitioned_polars_result.duration_ms as f64 / 1000.0),
         parquet_partitioned_polars_result.file_size_mb,
         baseline / parquet_partitioned_polars_result.duration_ms as f64);
     
-    info!("└─────────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘");
+    println!("└─────────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘");
     
     // Results Summary
-    info!("\n┌─────────────────────────────────────────────────────────────────────────────────┐");
-    info!("│ 📈 RESULTS SUMMARY                                                              │");
-    info!("├─────────────────────────────────────────────────────────────────────────────────┤");
-    info!("│ Total Rows Scanned:     {:>10}                                              │", csv_result.total_rows);
-    info!("│ Matching Rows Found:    {:>10}                                              │", csv_result.matching_rows);
-    info!("│ Match Rate:             {:>9.2}%                                              │", 
+    println!("\n┌─────────────────────────────────────────────────────────────────────────────────┐");
+    println!("│ 📈 RESULTS SUMMARY                                                              │");
+    println!("├─────────────────────────────────────────────────────────────────────────────────┤");
+    println!("│ Total Rows Scanned:     {:>10}                                              │", csv_result.total_rows);
+    println!("│ Matching Rows Found:    {:>10}                                              │", csv_result.matching_rows);
+    println!("│ Match Rate:             {:>9.2}%                                              │", 
         (csv_result.matching_rows as f64 / csv_result.total_rows as f64) * 100.0);
-    info!("└─────────────────────────────────────────────────────────────────────────────────┘");
+    println!("└─────────────────────────────────────────────────────────────────────────────────┘");
     
     // Winner Analysis
     let results = [
@@ -414,29 +414,29 @@ fn print_professional_report(
     ];
     let fastest = results.iter().min_by_key(|x| x.1).unwrap();
     
-    info!("\n┌─────────────────────────────────────────────────────────────────────────────────┐");
-    info!("│ 🏆 WINNER: {:60} │", fastest.0);
-    info!("├─────────────────────────────────────────────────────────────────────────────────┤");
-    info!("│ Best Query Time:        {:>8} ms                                              │", fastest.1);
-    info!("│ Performance Gain:       {:>8.2}x faster than CSV baseline                     │", 
+    println!("\n┌─────────────────────────────────────────────────────────────────────────────────┐");
+    println!("│ 🏆 WINNER: {:60} │", fastest.0);
+    println!("├─────────────────────────────────────────────────────────────────────────────────┤");
+    println!("│ Best Query Time:        {:>8} ms                                              │", fastest.1);
+    println!("│ Performance Gain:       {:>8.2}x faster than CSV baseline                     │", 
         baseline / fastest.1 as f64);
-    info!("│ Time Saved:             {:>8} ms ({:.1}% reduction)                          │",
+    println!("│ Time Saved:             {:>8} ms ({:.1}% reduction)                          │",
         csv_result.duration_ms - fastest.1,
         ((csv_result.duration_ms - fastest.1) as f64 / csv_result.duration_ms as f64) * 100.0);
-    info!("└─────────────────────────────────────────────────────────────────────────────────┘");
+    println!("└─────────────────────────────────────────────────────────────────────────────────┘");
     
     // Storage Efficiency
     let size_reduction = (1.0 - (parquet_result.file_size_mb / csv_result.file_size_mb)) * 100.0;
-    info!("\n┌─────────────────────────────────────────────────────────────────────────────────┐");
-    info!("│ 💾 STORAGE EFFICIENCY                                                           │");
-    info!("├─────────────────────────────────────────────────────────────────────────────────┤");
-    info!("│ CSV Size:               {:>8.2} MB                                            │", csv_result.file_size_mb);
-    info!("│ Parquet Size:           {:>8.2} MB                                            │", parquet_result.file_size_mb);
-    info!("│ Space Saved:            {:>8.2} MB ({:.1}% reduction)                        │",
+    println!("\n┌─────────────────────────────────────────────────────────────────────────────────┐");
+    println!("│ 💾 STORAGE EFFICIENCY                                                           │");
+    println!("├─────────────────────────────────────────────────────────────────────────────────┤");
+    println!("│ CSV Size:               {:>8.2} MB                                            │", csv_result.file_size_mb);
+    println!("│ Parquet Size:           {:>8.2} MB                                            │", parquet_result.file_size_mb);
+    println!("│ Space Saved:            {:>8.2} MB ({:.1}% reduction)                        │",
         csv_result.file_size_mb - parquet_result.file_size_mb,
         size_reduction);
-    info!("└─────────────────────────────────────────────────────────────────────────────────┘");
-    info!("\n");
+    println!("└─────────────────────────────────────────────────────────────────────────────────┘");
+    println!("\n");
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -447,37 +447,37 @@ fn main() -> Result<(), Box<dyn Error>> {
     let parquet_partitioned_dir = "mock_data_partitioned";
     let search_pattern = "Smith"; // Search for common last name
 
-    info!("\n🚀 Starting Performance Query Test...\n");
+    println!("\n🚀 Starting Performance Query Test...\n");
 
-    info!("⏳ Running benchmarks...");
+    println!("⏳ Running benchmarks...");
     
-    info!("\n[1/7] Testing CSV query...");
+    println!("\n[1/7] Testing CSV query...");
     let csv_result = query_csv(csv_file, search_pattern)?;
-    info!("      ✓ Completed in {} ms", csv_result.duration_ms);
+    println!("      ✓ Completed in {} ms", csv_result.duration_ms);
 
-    info!("\n[2/7] Testing CSV Polars query...");
+    println!("\n[2/7] Testing CSV Polars query...");
     let csv_polars_result = query_csv_polars(csv_file, search_pattern)?;
-    info!("      ✓ Completed in {} ms", csv_polars_result.duration_ms);
+    println!("      ✓ Completed in {} ms", csv_polars_result.duration_ms);
 
-    info!("\n[3/7] Testing Parquet Single File query...");
+    println!("\n[3/7] Testing Parquet Single File query...");
     let parquet_result = query_parquet(parquet_file, search_pattern)?;
-    info!("      ✓ Completed in {} ms", parquet_result.duration_ms);
+    println!("      ✓ Completed in {} ms", parquet_result.duration_ms);
 
-    info!("\n[4/7] Testing Parquet Optimized query...");
+    println!("\n[4/7] Testing Parquet Optimized query...");
     let parquet_optimized_result = query_parquet_optimized(parquet_file, search_pattern)?;
-    info!("      ✓ Completed in {} ms", parquet_optimized_result.duration_ms);
+    println!("      ✓ Completed in {} ms", parquet_optimized_result.duration_ms);
 
-    info!("\n[5/7] Testing Parquet Partitioned query...");
+    println!("\n[5/7] Testing Parquet Partitioned query...");
     let parquet_partitioned_result = query_parquet_partitioned(parquet_partitioned_dir, search_pattern)?;
-    info!("      ✓ Completed in {} ms", parquet_partitioned_result.duration_ms);
+    println!("      ✓ Completed in {} ms", parquet_partitioned_result.duration_ms);
 
-    info!("\n[6/7] Testing Parquet Polars query...");
+    println!("\n[6/7] Testing Parquet Polars query...");
     let parquet_polars_result = query_parquet_polars(parquet_file, search_pattern)?;
-    info!("      ✓ Completed in {} ms", parquet_polars_result.duration_ms);
+    println!("      ✓ Completed in {} ms", parquet_polars_result.duration_ms);
 
-    info!("\n[7/7] Testing Parquet Partitioned Polars query...");
+    println!("\n[7/7] Testing Parquet Partitioned Polars query...");
     let parquet_partitioned_polars_result = query_parquet_partitioned_polars(parquet_partitioned_dir, search_pattern)?;
-    info!("      ✓ Completed in {} ms", parquet_partitioned_polars_result.duration_ms);
+    println!("      ✓ Completed in {} ms", parquet_partitioned_polars_result.duration_ms);
 
     // Print professional report
     print_professional_report(
