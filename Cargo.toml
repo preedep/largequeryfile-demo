@@ -11,8 +11,17 @@ path = "src/bin/create_mock_csv.rs"
 name = "convert_csv2parquet"
 path = "src/bin/convert_csv2parquet.rs"
 
+[[bin]]
+name = "performance_query"
+path = "src/bin/performance_query.rs"
 
 [dependencies]
 pretty_env_logger = "0.5"
 log = "0.4"
 duckdb = {version = "1.4",features = ["bundled"]}
+csv = "1.3"
+rand = "0.9"
+fake = { version = "4.4", features = ["derive"] }
+parquet = "57.0"
+arrow = "57.0"
+
