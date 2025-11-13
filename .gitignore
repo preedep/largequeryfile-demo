@@ -28,3 +28,4 @@ target
 *.csv
 *.parquet
 mock_data_partitioned/
+mock_data_salary_partitioned/
