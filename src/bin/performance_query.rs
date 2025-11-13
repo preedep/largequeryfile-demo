@@ -1,10 +1,11 @@
-use arrow::array::{Array, AsArray, GenericByteArray};
-use arrow::datatypes::GenericStringType;
+use arrow::array::{Array, AsArray};
 use csv::ReaderBuilder;
 use log::info;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use rayon::prelude::*;
 use std::error::Error;
 use std::fs::File;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 #[derive(Debug)]
@@ -53,35 +54,28 @@ fn query_csv(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<d
 }
 
 fn search_in_batch(batch: &arrow::record_batch::RecordBatch, search_pattern: &str) -> usize {
-    let mut matching_rows = 0;
     let num_rows = batch.num_rows();
-
-    for col_idx in 0..batch.num_columns() {
-        let column = batch.column(col_idx);
-        if let Some(string_array) = column.as_string_opt::<i32>() {
-            matching_rows += count_matches_in_column(string_array, search_pattern, num_rows);
-        }
-    }
-
-    matching_rows
+    let num_cols = batch.num_columns();
+    
+    // Count rows where pattern appears in ANY column (not sum of all columns)
+    (0..num_rows)
+        .into_par_iter()
+        .filter(|&row_idx| {
+            // Check if this row has the pattern in any column
+            for col_idx in 0..num_cols {
+                let column = batch.column(col_idx);
+                if let Some(string_array) = column.as_string_opt::<i32>() {
+                    if !string_array.is_null(row_idx) && string_array.value(row_idx).contains(search_pattern) {
+                        return true; // Found in this row, count it once
+                    }
+                }
+            }
+            false
+        })
+        .count()
 }
 
-fn count_matches_in_column(
-    string_array: &GenericByteArray<GenericStringType<i32>>,
-    search_pattern: &str,
-    num_rows: usize,
-) -> usize {
-    let mut matches = 0;
-
-    for row_idx in 0..num_rows {
-        if !string_array.is_null(row_idx) && string_array.value(row_idx).contains(search_pattern) {
-            matches += 1;
-            break;
-        }
-    }
-
-    matches
-}
+// Removed - no longer needed
 
 fn query_parquet(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
     info!("Starting Parquet query...");
@@ -107,6 +101,43 @@ fn query_parquet(file_path: &str, search_pattern: &str) -> Result<QueryResult, B
     Ok(QueryResult {
         total_rows,
         matching_rows,
+        duration_ms,
+        file_size_mb,
+    })
+}
+
+// Optimized version with tuning
+fn query_parquet_optimized(file_path: &str, search_pattern: &str) -> Result<QueryResult, Box<dyn Error>> {
+    info!("Starting Optimized Parquet query...");
+    let start = Instant::now();
+
+    let file = File::open(file_path)?;
+    let file_size_mb = file.metadata()?.len() as f64 / 1_024_000.0;
+
+    // Optimization 1: Larger batch size for better throughput
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let reader = builder
+        .with_batch_size(8192) // Increase from default 1024
+        .build()?;
+
+    let total_rows = AtomicUsize::new(0);
+    let matching_rows = AtomicUsize::new(0);
+
+    // Optimization 2: Collect batches first, then process in parallel
+    let batches: Vec<_> = reader.collect::<Result<Vec<_>, _>>()?;
+    
+    // Optimization 3: Parallel batch processing
+    batches.par_iter().for_each(|batch| {
+        total_rows.fetch_add(batch.num_rows(), Ordering::Relaxed);
+        let matches = search_in_batch(batch, search_pattern);
+        matching_rows.fetch_add(matches, Ordering::Relaxed);
+    });
+
+    let duration_ms = start.elapsed().as_millis();
+
+    Ok(QueryResult {
+        total_rows: total_rows.load(Ordering::Relaxed),
+        matching_rows: matching_rows.load(Ordering::Relaxed),
         duration_ms,
         file_size_mb,
     })
@@ -175,12 +206,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     let csv_result = query_csv(csv_file, search_pattern)?;
     info!("CSV query completed in {} ms", csv_result.duration_ms);
 
-    // Query Parquet
+    // Query Parquet (Standard)
     let parquet_result = query_parquet(parquet_file, search_pattern)?;
     info!("Parquet query completed in {} ms", parquet_result.duration_ms);
 
+    // Query Parquet (Optimized)
+    let parquet_optimized_result = query_parquet_optimized(parquet_file, search_pattern)?;
+    info!("Parquet OPTIMIZED query completed in {} ms", parquet_optimized_result.duration_ms);
+
     // Print comparison report
     print_report(&csv_result, &parquet_result, search_pattern);
+
+    info!("\n{}", "=".repeat(80));
+    info!("🚀 OPTIMIZED PARQUET RESULTS");
+    info!("{}", "=".repeat(80));
+    info!("  Query Time:         {} ms", parquet_optimized_result.duration_ms);
+    info!("  vs Standard:        {:.2}x faster", 
+          parquet_result.duration_ms as f64 / parquet_optimized_result.duration_ms as f64);
+    info!("  vs CSV:             {:.2}x {}", 
+          if csv_result.duration_ms > parquet_optimized_result.duration_ms {
+              csv_result.duration_ms as f64 / parquet_optimized_result.duration_ms as f64
+          } else {
+              parquet_optimized_result.duration_ms as f64 / csv_result.duration_ms as f64
+          },
+          if csv_result.duration_ms > parquet_optimized_result.duration_ms { "FASTER" } else { "SLOWER" });
+    info!("{}", "=".repeat(80));
 
     Ok(())
 }
