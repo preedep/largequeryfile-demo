@@ -29,3 +29,8 @@ target
 *.parquet
 mock_data_partitioned/
 mock_data_salary_partitioned/
+mock_data_delta/
+mock_data_salary_delta/
+mock_data_delta_partitioned/
+mock_data_salary_delta_partitioned/
+_delta_log/

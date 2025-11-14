@@ -22,10 +22,14 @@ duckdb = {version = "1.4",features = ["bundled"]}
 csv = "1.3"
 rand = "0.9"
 fake = { version = "4.4", features = ["derive"] }
-parquet = "57.0"
-arrow = "57.0"
+parquet = "57"
+arrow = "57"
 rayon = "1.10"
 chrono = "0.4"
 polars = { version = "0.44", features = ["lazy", "parquet", "csv", "strings"] }
-sysinfo = "0.32"
+sysinfo = "0.37"
+# Delta Lake support - manual implementation (no library needed)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
 
