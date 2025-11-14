@@ -80,6 +80,56 @@ fn create_arrow_arrays(columns: &[Vec<String>], column_types: &[DataType]) -> Ve
     }).collect()
 }
 
+fn calculate_column_stats(
+    columns: &[Vec<String>],
+    headers: &[String],
+    column_types: &[DataType],
+) -> serde_json::Value {
+    let num_records = columns[0].len();
+    
+    let mut min_values = serde_json::Map::new();
+    let mut max_values = serde_json::Map::new();
+    let mut null_count = serde_json::Map::new();
+    
+    for (i, (header, dtype)) in headers.iter().zip(column_types.iter()).enumerate() {
+        match dtype {
+            DataType::Int32 => {
+                // For integer columns
+                let values: Vec<i32> = columns[i].iter()
+                    .map(|s| s.parse::<i32>().unwrap_or(0))
+                    .collect();
+                
+                if let (Some(&min), Some(&max)) = (values.iter().min(), values.iter().max()) {
+                    min_values.insert(header.clone(), json!(min));
+                    max_values.insert(header.clone(), json!(max));
+                }
+            },
+            _ => {
+                // For string columns - lexicographic min/max
+                if !columns[i].is_empty() {
+                    if let (Some(min), Some(max)) = (
+                        columns[i].iter().min(),
+                        columns[i].iter().max()
+                    ) {
+                        min_values.insert(header.clone(), json!(min));
+                        max_values.insert(header.clone(), json!(max));
+                    }
+                }
+            }
+        }
+        
+        // Count nulls (currently always 0 since we don't have nullable data)
+        null_count.insert(header.clone(), json!(0));
+    }
+    
+    json!({
+        "numRecords": num_records,
+        "minValues": min_values,
+        "maxValues": max_values,
+        "nullCount": null_count
+    })
+}
+
 fn write_single_parquet(
     output_file: &str,
     columns: Vec<Vec<String>>,
@@ -276,6 +326,7 @@ fn convert_csv_to_delta(
     create_delta_log_files(
         &delta_log_path,
         input_file,
+        &columns,
         &headers,
         &column_types,
         parquet_file_name,
@@ -368,7 +419,7 @@ fn convert_csv_to_delta_partitioned(
 
         let file_size = fs::metadata(&parquet_path)?.len();
         total_size += file_size;
-        partition_files.push((parquet_file_name, file_size, end_idx - start_idx));
+        partition_files.push((parquet_file_name, file_size, partition_columns));
         
         info!("  Wrote {} ({} bytes, {} rows)", 
               partition_files.last().unwrap().0,
@@ -402,6 +453,7 @@ fn convert_csv_to_delta_partitioned(
 fn create_delta_log_files(
     delta_log_path: &str,
     table_name: &str,
+    columns: &[Vec<String>],
     headers: &[String],
     column_types: &[DataType],
     parquet_file: &str,
@@ -497,10 +549,7 @@ fn create_delta_log_files(
             "size": file_size,
             "modificationTime": timestamp + 1000,
             "dataChange": true,
-            "stats": json!({
-                "numRecords": num_records,
-                "nullCount": headers.iter().map(|h| (h.clone(), json!(0))).collect::<serde_json::Map<String, serde_json::Value>>()
-            }).to_string()
+            "stats": calculate_column_stats(columns, headers, column_types).to_string()
         }
     });
 
@@ -519,7 +568,7 @@ fn create_delta_log_files_partitioned(
     table_name: &str,
     headers: &[String],
     column_types: &[DataType],
-    partition_files: &[(String, u64, usize)], // (filename, size, num_records)
+    partition_files: &[(String, u64, Vec<Vec<String>>)], // (filename, size, partition_columns)
     total_records: usize,
 ) -> Result<(), Box<dyn Error>> {
     let timestamp = SystemTime::now()
@@ -611,7 +660,8 @@ fn create_delta_log_files_partitioned(
     writeln!(txn1_file, "{}", serde_json::to_string_pretty(&commit_info)?)?;
     
     // Write add action for each partition file
-    for (filename, file_size, num_records) in partition_files {
+    for (filename, file_size, partition_columns) in partition_files {
+        let stats = calculate_column_stats(partition_columns, headers, column_types);
         let add_file = json!({
             "add": {
                 "path": filename,
@@ -619,10 +669,7 @@ fn create_delta_log_files_partitioned(
                 "size": file_size,
                 "modificationTime": timestamp + 1000,
                 "dataChange": true,
-                "stats": json!({
-                    "numRecords": num_records,
-                    "nullCount": headers.iter().map(|h| (h.clone(), json!(0))).collect::<serde_json::Map<String, serde_json::Value>>()
-                }).to_string()
+                "stats": stats.to_string()
             }
         });
         writeln!(txn1_file, "{}", serde_json::to_string_pretty(&add_file)?)?;

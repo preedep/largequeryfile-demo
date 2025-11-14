@@ -34,3 +34,4 @@ mock_data_salary_delta/
 mock_data_delta_partitioned/
 mock_data_salary_delta_partitioned/
 _delta_log/
+/.vscode/settings.json
