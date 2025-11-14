@@ -66,6 +66,20 @@ fn infer_column_types(headers: &[String], first_row: &[String]) -> Vec<DataType>
     }).collect()
 }
 
+fn create_arrow_arrays(columns: &[Vec<String>], column_types: &[DataType]) -> Vec<ArrayRef> {
+    columns.iter().zip(column_types.iter()).map(|(col, dtype)| {
+        match dtype {
+            DataType::Int32 => {
+                let int_values: Vec<i32> = col.iter()
+                    .map(|s| s.parse::<i32>().unwrap_or(0))
+                    .collect();
+                Arc::new(Int32Array::from(int_values)) as ArrayRef
+            },
+            _ => Arc::new(StringArray::from(col.clone())) as ArrayRef,
+        }
+    }).collect()
+}
+
 fn write_single_parquet(
     output_file: &str,
     columns: Vec<Vec<String>>,
@@ -85,17 +99,7 @@ fn write_single_parquet(
     let schema = create_schema(&headers, &column_types);
 
     // Create Arrow arrays based on inferred types
-    let arrays: Vec<ArrayRef> = columns.iter().zip(column_types.iter()).map(|(col, dtype)| {
-        match dtype {
-            DataType::Int32 => {
-                let int_values: Vec<i32> = col.iter()
-                    .map(|s| s.parse::<i32>().unwrap_or(0))
-                    .collect();
-                Arc::new(Int32Array::from(int_values)) as ArrayRef
-            },
-            _ => Arc::new(StringArray::from(col.clone())) as ArrayRef,
-        }
-    }).collect();
+    let arrays = create_arrow_arrays(&columns, &column_types);
 
     // Create record batch
     let batch = RecordBatch::try_new(schema.clone(), arrays)?;
@@ -154,17 +158,7 @@ fn write_partitioned_parquet(
             .collect();
 
         // Create Arrow arrays based on inferred types
-        let arrays: Vec<ArrayRef> = partition_columns.iter().zip(column_types.iter()).map(|(col, dtype)| {
-            match dtype {
-                DataType::Int32 => {
-                    let int_values: Vec<i32> = col.iter()
-                        .map(|s| s.parse::<i32>().unwrap_or(0))
-                        .collect();
-                    Arc::new(Int32Array::from(int_values)) as ArrayRef
-                },
-                _ => Arc::new(StringArray::from(col.clone())) as ArrayRef,
-            }
-        }).collect();
+        let arrays = create_arrow_arrays(&partition_columns, &column_types);
 
         // Create record batch
         let batch = RecordBatch::try_new(schema.clone(), arrays)?;
@@ -259,17 +253,7 @@ fn convert_csv_to_delta(
     info!("Writing data to Parquet files...");
 
     // Create Arrow arrays
-    let arrays: Vec<ArrayRef> = columns.iter().zip(column_types.iter()).map(|(col, dtype)| {
-        match dtype {
-            DataType::Int32 => {
-                let int_values: Vec<i32> = col.iter()
-                    .map(|s| s.parse::<i32>().unwrap_or(0))
-                    .collect();
-                Arc::new(Int32Array::from(int_values)) as ArrayRef
-            },
-            _ => Arc::new(StringArray::from(col.clone())) as ArrayRef,
-        }
-    }).collect();
+    let arrays = create_arrow_arrays(&columns, &column_types);
 
     // Create record batch
     let batch = RecordBatch::try_new(arrow_schema.clone(), arrays)?;
@@ -366,17 +350,7 @@ fn convert_csv_to_delta_partitioned(
             .collect();
 
         // Create Arrow arrays
-        let arrays: Vec<ArrayRef> = partition_columns.iter().zip(column_types.iter()).map(|(col, dtype)| {
-            match dtype {
-                DataType::Int32 => {
-                    let int_values: Vec<i32> = col.iter()
-                        .map(|s| s.parse::<i32>().unwrap_or(0))
-                        .collect();
-                    Arc::new(Int32Array::from(int_values)) as ArrayRef
-                },
-                _ => Arc::new(StringArray::from(col.clone())) as ArrayRef,
-            }
-        }).collect();
+        let arrays = create_arrow_arrays(&partition_columns, &column_types);
 
         // Create record batch
         let batch = RecordBatch::try_new(arrow_schema.clone(), arrays)?;
